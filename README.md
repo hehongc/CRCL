@@ -1,4 +1,4 @@
-# Task Characteristic and Contrastive Contexts for Improving Generalization in Offline Meta-Reinforcement Learning, AAAI 2026
+# Task Characteristic Contexts for Improving Generalization in Offline Meta-Reinforcement Learning, AAAI 2026
 ## Installation
 To install locally, you will need to first install [MuJoCo](https://www.roboti.us/index.html). For task distributions in which the reward function varies (Cheetah, Ant, Humanoid), install MuJoCo200. Set `LD_LIBRARY_PATH` to point to both the MuJoCo binaries (`/$HOME/.mujoco/mujoco200/bin`).
 
