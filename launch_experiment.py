@@ -51,7 +51,7 @@ def experiment(variant, seed=None):
 
     # instantiate networks
     latent_dim = variant['latent_size']
-    # 全部都会用到 next state
+
     context_encoder_input_dim = 2 * obs_dim + action_dim + reward_dim if variant['algo_params']['use_next_obs_in_context'] else obs_dim + action_dim + reward_dim
     context_encoder_output_dim = latent_dim * 2 if variant['algo_params']['use_information_bottleneck'] else latent_dim
     net_size = variant['net_size']
