@@ -205,7 +205,7 @@ class CSROSoftActorCritic(OfflineMetaRLAlgorithm):
         for i in range(num_updates):
             context = context_batch[:, i * mb_size: i * mb_size + mb_size, :]
             self.loss['step'] = self._num_steps
-            # 接具体的每一步 step 处理情况
+
             z_means, z_vars, wandb_stat = self._take_step(indices, context)
             self._num_steps += 1
             z_means_lst.append(z_means[None, ...])
