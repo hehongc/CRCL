@@ -78,7 +78,7 @@ class CSROSoftActorCritic(OfflineMetaRLAlgorithm):
         self.club_criterion                 = nn.MSELoss()
         self.cross_entropy_loss             = nn.CrossEntropyLoss()
 
-        self.qf1, self.qf2, self.vf, self.c, self.club_model, self.reward_decoder, self.transition_decoder, self.context_inverse_model = nets[1:]
+        self.qf1, self.qf2, self.vf, self.c, self.club_model, self.reward_decoder, self.transition_decoder = nets[1:]
         self.target_vf                      = self.vf.copy()
 
         self.policy_optimizer               = optimizer_class(self.agent.policy.parameters(), lr=self.policy_lr)
@@ -101,9 +101,7 @@ class CSROSoftActorCritic(OfflineMetaRLAlgorithm):
         self.VideoRLCS_loss = nn.SmoothL1Loss()
 
         self.reward_decoder_optimizer = optimizer_class(self.reward_decoder.parameters(), lr=self.qf_lr)
-
         self.transition_decoder_optimizer = optimizer_class(self.transition_decoder.parameters(), lr=self.qf_lr)
-        self.context_inverse_model_optimizer = optimizer_class(self.context_inverse_model.parameters(), lr=self.qf_lr)
 
         for net in nets:
             self.print_networks(net)
@@ -111,7 +109,7 @@ class CSROSoftActorCritic(OfflineMetaRLAlgorithm):
     ###### Torch stuff #####
     @property
     def networks(self):
-        return self.agent.networks + [self.qf1, self.qf2, self.vf, self.target_vf, self.c, self.club_model, self.reward_decoder, self.transition_decoder, self.context_inverse_model]
+        return self.agent.networks + [self.qf1, self.qf2, self.vf, self.target_vf, self.c, self.club_model, self.reward_decoder, self.transition_decoder]
 
     @property
     def get_alpha(self):
@@ -278,63 +276,6 @@ class CSROSoftActorCritic(OfflineMetaRLAlgorithm):
 
         return unpacked, context
 
-    def TACO_loss(self, indices, K=4):
-        trajs, trajs_context = self.sample_trajs(indices)
-
-        context_embedding = self.agent.only_infer_context_embeddings_TACO(trajs_context)
-        cross_entropy_loss = nn.CrossEntropyLoss()
-
-        loss = 0.
-        inverse_loss = 0.
-        backward_loss = 0.
-        for i in range(context_embedding.shape[1] - K + 1):
-            last_context = context_embedding[:, i + K - 1, :].view(context_embedding.shape[0], 1,
-                                                                   context_embedding.shape[-1])
-
-            prior_context = context_embedding[:, i:i + K - 1, :]
-            first_context = context_embedding[:, i, :].view(context_embedding.shape[0], 1, context_embedding.shape[-1])
-            sub_context = context_embedding[:, i:i + K, :]
-            later_context = context_embedding[:, i + 1:i + K, :]
-
-
-            prior_context = torch.mean(prior_context, dim=1, keepdim=True)
-            sub_context = torch.mean(sub_context, dim=1, keepdim=True)
-            later_context = torch.mean(later_context, dim=1, keepdim=True)
-
-
-            last_context = last_context.squeeze()
-            prior_context = prior_context.squeeze()
-            first_context = first_context.squeeze()
-            sub_context = sub_context.squeeze()
-            later_context = later_context.squeeze()
-
-            # print("prior_context.shape:", prior_context.shape)
-            Wz = torch.matmul(self.agent.W, prior_context.T)
-            logits = torch.matmul(last_context, Wz)
-            logits = logits - torch.max(logits, 1)[0][:, None]
-
-            labels = torch.arange(logits.shape[0]).long().cuda()
-            loss += cross_entropy_loss(logits, labels)
-
-            pre_sub_context = self.context_inverse_model(torch.cat([first_context, last_context], dim=-1).cuda())
-            pre_loss = self.pred_loss(sub_context, pre_sub_context).mean()
-            inverse_loss = inverse_loss + pre_loss
-
-
-            Wz = torch.matmul(self.agent.W, later_context.T)
-            logits = torch.matmul(first_context, Wz)
-            logits = logits - torch.max(logits, 1)[0][:, None]
-
-            labels = torch.arange(logits.shape[0]).long().cuda()
-            backward_loss += cross_entropy_loss(logits, labels)
-
-
-        loss = loss / (context_embedding.shape[1] - K + 1)
-        inverse_loss = inverse_loss / (context_embedding.shape[1] - K + 1)
-        backward_loss = backward_loss / (context_embedding.shape[1] - K + 1)
-
-        return loss, inverse_loss, backward_loss
-
     def TACO_loss_vectorized(self, indices, K=8):
         trajs, trajs_context = self.sample_trajs(indices)
 
@@ -362,60 +303,6 @@ class CSROSoftActorCritic(OfflineMetaRLAlgorithm):
         labels = torch.arange(task_num, device=device).long()
         labels = labels[:, None].expand(-1, T_new).reshape(-1)
         loss = cross_entropy_loss(logits.reshape(-1, logits.shape[-1]), labels)
-
-        # Inverse loss
-        input_inverse = torch.cat([first_context, last_context], dim=-1).reshape(-1, 2 * context_dim)
-        target_inverse = sub_context.reshape(-1, context_dim)
-        pred_inverse = self.context_inverse_model(input_inverse)
-        inverse_loss = self.pred_loss(target_inverse, pred_inverse).mean()
-
-        # Backward Cross Entropy Loss
-        Wz_back = torch.matmul(self.agent.W, later_context.permute(0, 2, 1))  # [dim, task_num, T-K+1]
-        # logits_back = torch.einsum('ntd,dtk->ntk', first_context, Wz_back)
-        logits_back = torch.bmm(first_context, Wz_back)
-        logits_back = logits_back - logits_back.max(dim=2, keepdim=True)[0]
-
-        backward_loss = cross_entropy_loss(logits_back.reshape(-1, logits_back.shape[-1]), labels)
-
-        return loss, inverse_loss, backward_loss
-
-    def bisimulation_loss(self, indices):
-
-        context_batch_1 = self.sample_context(indices)
-        context_batch_2 = self.sample_context(indices)
-        obs, actions, rewards, next_obs, terms = self.sample_sac(indices, b_size=64)
-        t, b, _ = obs.size()
-
-        obs = obs.reshape(t * b, -1)
-        actions = actions.reshape(t * b, -1)
-
-        context_embedding_1 = self.agent.only_infer_context_embeddings(context_batch_1)
-        context_embedding_2 = self.agent.only_infer_context_embeddings(context_batch_2)
-
-        task_num = len(indices)
-
-        loss = 0.
-        for i in range(task_num):
-            context_A = context_embedding_1[i, :].reshape(1, -1)
-            context_A = context_A.expand(t*b,context_A.shape[-1])
-            for j in range(task_num):
-                context_B = context_embedding_2[j, :].reshape(1, -1)
-                context_B = context_B.expand(t*b,context_B.shape[-1])
-
-                pre_reward_A = self.reward_decoder(0, 0, context_A, obs, actions)
-                pre_reward_B = self.reward_decoder(0, 0, context_B, obs, actions)
-
-                reward_part = 0.5 * (pre_reward_A - pre_reward_B) ** 2
-
-                pre_transition_A = self.transition_decoder(0, 0, context_A, obs, actions)
-                pre_transition_B = self.transition_decoder(0, 0, context_B, obs, actions)
-
-                transition_part = 0.5 * (pre_transition_A - pre_transition_B) ** 2
-                context_part = (context_A - context_B) ** 2
-
-                loss += reward_part.mean() + transition_part.mean() - context_part.mean()
-
-        loss = loss / (task_num * task_num)
 
         return loss
 
@@ -460,7 +347,7 @@ class CSROSoftActorCritic(OfflineMetaRLAlgorithm):
 
         context_part = (context_A_flat - context_B_flat).pow(2)
 
-        loss = reward_part.mean() + transition_part.mean() - context_part.mean()
+        loss = reward_part.mean().detach() + transition_part.mean().detach() - context_part.mean()
         return loss / (task_num * task_num)
 
 
@@ -538,7 +425,6 @@ class CSROSoftActorCritic(OfflineMetaRLAlgorithm):
         self.context_optimizer.zero_grad()
         self.reward_decoder_optimizer.zero_grad()
         self.transition_decoder_optimizer.zero_grad()
-        self.context_inverse_model_optimizer.zero_grad()
 
         if self.use_club:
             z_target = self.agent.encode_no_mean(context)
@@ -574,18 +460,11 @@ class CSROSoftActorCritic(OfflineMetaRLAlgorithm):
         self.loss["transition_prediction_loss"] = torch.mean(transition_loss).item()
         wandb_stat["transition_prediction_loss"] = torch.mean(transition_loss).item()
 
-        taco_loss, inverse_loss, backward_loss = self.TACO_loss_vectorized(indices, K=8)
+        taco_loss = self.TACO_loss_vectorized(indices, K=8)
         self.loss["taco_loss"] = taco_loss.item()
         wandb_stat["taco_loss"] = taco_loss.item()
-        self.loss["inverse_loss"] = inverse_loss.item()
-        wandb_stat["inverse_loss"] = inverse_loss.item()
-        self.loss["backward_loss"] = backward_loss.item()
-        wandb_stat["backward_loss"] = backward_loss.item()
         taco_loss = taco_loss * 1.0
-        inverse_loss = inverse_loss * 1.0
-        backward_loss = backward_loss * 1.0
-
-        sub_loss = taco_loss * 1.0 + inverse_loss * 1.0 + backward_loss * 1.0
+        sub_loss = taco_loss * 1.0 
 
         sub_loss.backward(retain_graph=True)
 
@@ -595,7 +474,6 @@ class CSROSoftActorCritic(OfflineMetaRLAlgorithm):
         wandb_stat["bisimulation_loss"] = bisimulation_loss.item()
 
         bisimulation_loss.backward(retain_graph=True)
-
 
 
         # qf and encoder update (note encoder does not get grads from policy or vf)
@@ -626,7 +504,6 @@ class CSROSoftActorCritic(OfflineMetaRLAlgorithm):
 
         self.reward_decoder_optimizer.step()
         self.transition_decoder_optimizer.step()
-        self.context_inverse_model_optimizer.step()
 
         # compute min Q on the new actions
         min_q_new_actions = torch.min(self.qf1(t, b, obs, new_actions, task_z.detach()),
