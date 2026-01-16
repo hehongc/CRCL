@@ -277,7 +277,7 @@ class CSROSoftActorCritic(OfflineMetaRLAlgorithm):
         return unpacked, context
 
     def TACO_loss_vectorized(self, indices, K=8):
-        trajs, trajs_context = self.sample_trajs(indices)
+        trajs_context = self.sample_context(indices)
 
         context_embedding = self.agent.only_infer_context_embeddings_TACO(trajs_context)
         # print("context_embedding.shape: ", context_embedding.shape)
