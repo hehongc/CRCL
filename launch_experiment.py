@@ -113,12 +113,6 @@ def experiment(variant, seed=None):
                              input_size=latent_dim + obs_dim + action_dim,
                              output_size=obs_dim, )
 
-    context_inverse_model = Mlp(
-        hidden_sizes=[net_size, net_size, net_size],
-        input_size=latent_dim * 2,
-        output_size=latent_dim
-    )
-
     agent = PEARLAgent(
         latent_dim,
         context_encoder,
@@ -158,7 +152,7 @@ def experiment(variant, seed=None):
                     env=env,
                     train_tasks=train_tasks,
                     eval_tasks=eval_tasks,
-                    nets=[agent, qf1, qf2, vf, c, club_model, rew_decoder, transition_decoder, context_inverse_model],
+                    nets=[agent, qf1, qf2, vf, c, club_model, rew_decoder, transition_decoder],
                     latent_dim=latent_dim,
                     wandb_project_name=variant['util_params']['wandb_project_name'],
                     wandb_run_name=variant['util_params']['wandb_run_name'],
@@ -170,7 +164,7 @@ def experiment(variant, seed=None):
                     env=env,
                     train_tasks=list(tasks[:variant['n_train_tasks']]),
                     eval_tasks=list(tasks[-variant['n_eval_tasks']:]),
-                    nets=[agent, qf1, qf2, vf, c, club_model, rew_decoder, transition_decoder, context_inverse_model],
+                    nets=[agent, qf1, qf2, vf, c, club_model, rew_decoder, transition_decoder],
                     latent_dim=latent_dim,
                     goal_radius=variant['env_params']['goal_radius'],
                     wandb_project_name=variant['util_params']['wandb_project_name'],
@@ -182,7 +176,7 @@ def experiment(variant, seed=None):
                     env=env,
                     train_tasks=list(tasks[:variant['n_train_tasks']]),
                     eval_tasks=list(tasks[-variant['n_eval_tasks']:]),
-                    nets=[agent, qf1, qf2, vf, c, club_model, rew_decoder, transition_decoder, context_inverse_model],
+                    nets=[agent, qf1, qf2, vf, c, club_model, rew_decoder, transition_decoder],
                     latent_dim=latent_dim,
                     wandb_project_name=variant['util_params']['wandb_project_name'],
                     wandb_run_name=variant['util_params']['wandb_run_name'],
